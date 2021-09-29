@@ -270,6 +270,7 @@ class SegmentationDataset():
         self.hdf5_file = hdf5_file
         self.hf = h5py.File(self.hdf5_file, 'r')
         self.hf_keys = list(self.hf.keys())
+        self.sizes = [self.hf[k]['image'].shape[:2] for k in self.hf_keys]
         self.idx_to_keys = {i:x for i,x in enumerate(self.hf_keys)}
         self.dimensions = dimensions
         self.size = (self.dimensions[2]-self.dimensions[0],
@@ -296,13 +297,9 @@ class SegmentationDataset():
         def get_rotation_dimensions(he,wi,angle):
             theta = np.radians(angle)
             inter_h = np.maximum(
-                int(np.ceil(np.sin(theta)*he+np.cos(theta)*wi)),
-                out_h
-                )
+                int(np.ceil(np.sin(theta)*he+np.cos(theta)*wi)),out_h)
             inter_w = np.maximum(
-                int(np.ceil(np.cos(theta)*he+np.sin(theta)*wi)),
-                out_w
-            )
+                int(np.ceil(np.cos(theta)*he+np.sin(theta)*wi)),out_w)
             return inter_w,inter_h
 
         p = 1 # offset for two-step rotation

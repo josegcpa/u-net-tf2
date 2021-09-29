@@ -12,7 +12,22 @@ class MeanIoU(keras.metrics.MeanIoU):
     def update_state(self, y_true, y_pred, sample_weight=None):
         y_true = tf.argmax(y_true, axis=-1)
         y_pred = tf.argmax(y_pred, axis=-1)
-        return super().update_state(y_true,y_pred, sample_weight)
+        return super().update_state(y_true,y_pred,sample_weight)
+
+class Precision(tf.keras.metrics.Precision):
+    # adapts Precision to work with model.fit using logits
+    def update_state(self, y_true, y_pred, sample_weight=None):
+        y_true = tf.argmax(y_true, axis=-1)
+        y_pred = tf.argmax(y_pred, axis=-1)
+        return super().update_state(y_true,y_pred,sample_weight)
+
+class AUC(tf.keras.metrics.AUC):
+    # adapts AUC to work with model.fit using logits.
+    # assumes only two labels are present
+    def update_state(self, y_true, y_pred, sample_weight=None):
+        y_true = tf.argmax(y_true, axis=-1)
+        y_pred = tf.keras.activations.softmax(y_pred, axis=-1)[:,:,:,1]
+        return super().update_state(y_true,y_pred,sample_weight)
 
 class ImageCallBack(keras.callbacks.Callback):
     # writes images to summary
@@ -39,6 +54,8 @@ class ImageCallBack(keras.callbacks.Callback):
                 tf.summary.image("4:WeightMap",w,self.count)
                 tf.summary.scalar("Loss",logs['loss'],self.count)
                 tf.summary.scalar("MeanIoU",logs['mean_io_u'],self.count)
+                tf.summary.scalar("AUC",logs['auc'],self.count)
+                tf.summary.scalar("Precision",logs['precision'],self.count)
         self.count += 1
 
 if __name__ == "__main__":
@@ -177,7 +194,7 @@ if __name__ == "__main__":
         input_height=args.input_height,input_width=args.input_width,
         key_list=key_list,
         augment_fn=IA.augment)
-
+    
     def load_generator():
         while True:
             yield hdf5_dataset.grab()
@@ -202,18 +219,22 @@ if __name__ == "__main__":
             lambda x,y,w: tf.reduce_sum(y[:,:,1:]) > 0.)
         tf_dataset_val = tf_dataset_val.filter(
             lambda x,y,w: tf.reduce_sum(y[:,:,1:]) > 0.)
-    tf_dataset = tf_dataset.batch(args.batch_size).prefetch(50)
-    tf_dataset_val = tf_dataset_val.batch(args.batch_size).prefetch(50)
+    tf_dataset = tf_dataset.batch(args.batch_size).prefetch(100)
+    tf_dataset_val = tf_dataset_val.batch(args.batch_size).prefetch(100)
 
     print("Setting up training...")
     iou = MeanIoU(args.n_classes)
+    auc = AUC()
+    prec = Precision()
     loss_fn = WeightedCrossEntropy()
-    loss_fn_compile = keras.losses.CategoricalCrossentropy()
+    loss_fn_compile = keras.losses.CategoricalCrossentropy(from_logits=True)
     u_net.compile(
         optimizer=keras.optimizers.Adamax(learning_rate=args.learning_rate),
-        loss=loss_fn_compile, metrics=[iou])
+        loss=loss_fn_compile, metrics=[iou,auc,prec])
     u_net.loss_fn = loss_fn
     steps_per_epoch = hdf5_dataset.size // args.batch_size
+    steps_per_epoch *= hdf5_dataset.average_image_side / args.input_height
+    steps_per_epoch = int(steps_per_epoch)
 
     tensorboard_callback = keras.callbacks.TensorBoard(
         log_dir=args.save_summary_folder)

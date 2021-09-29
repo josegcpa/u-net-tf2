@@ -380,6 +380,8 @@ class HDF5Dataset:
             rel_keys=['image','mask','weight_map'],
             rotate_record=True,
             transform=None)
+        self.average_image_side = np.mean(
+            [x[0] for x in self.segmentation_dataset.sizes])
         self.size = len(self.segmentation_dataset)
         self.key_list = [x for x in self.key_list 
                          if x in self.segmentation_dataset.hf_keys]
