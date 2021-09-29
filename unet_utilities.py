@@ -324,7 +324,7 @@ class WeightedCrossEntropy(keras.losses.Loss):
             l = l + tf.add_n(model.losses) / len(model.losses)
         return l
     def __call__(self,y_true,y_pred,sample_weight,regularization_losses=None):
-        return call(
+        return self.call(
             self,y_true,y_pred,sample_weight,regularization_losses=None)
 
 class TrainUpdater:
