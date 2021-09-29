@@ -300,7 +300,11 @@ class UNet(keras.Model):
         with tf.GradientTape() as tape:
             y_pred = self(x, training=True)
             loss = self.loss_fn(
-                y,y_pred,w,regularization_losses=self.losses,)
+                y,y_pred,w,regularization_losses=self.losses)
+
+        # ensures loss in metrics is also updated
+        self.compiled_loss(
+            y,y_pred,sample_weight=None,regularization_losses=self.losses) 
 
         trainable_vars = self.trainable_variables
         gradients = tape.gradient(loss, trainable_vars)
@@ -312,20 +316,18 @@ class WeightedCrossEntropy(keras.losses.Loss):
     def __init__(self):
         super(WeightedCrossEntropy,self).__init__()
         self.loss = keras.losses.CategoricalCrossentropy(
-            reduction=tf.keras.losses.Reduction.NONE)
+            from_logits=True,reduction=tf.keras.losses.Reduction.NONE)
 
-    def call(self,y_true,y_pred,sample_weight,regularization_losses=None):
-        if tf.rank(w) == 4:
-            w = w[:,:,:,0]
+    def call(self,y_true,y_pred,w,regularization_losses=None):
         l = self.loss(y_true,y_pred)
-        l = l * w
+        l = l * w[:,:,:,0]
         l = tf.reduce_mean(l,axis=[1,2])
-        if model is not None:
-            l = l + tf.add_n(model.losses) / len(model.losses)
+        if regularization_losses is not None:
+            l = l + tf.add_n(regularization_losses)/len(regularization_losses)
         return l
-    def __call__(self,y_true,y_pred,sample_weight,regularization_losses=None):
-        return self.call(
-            self,y_true,y_pred,sample_weight,regularization_losses=None)
+
+    def __call__(self,y_true,y_pred,w,regularization_losses=None):
+        return self.call(y_true,y_pred,w,regularization_losses=None)
 
 class TrainUpdater:
     def __init__(self,optimizer,loss):
@@ -361,12 +363,6 @@ class TrainUpdater:
     
     def get_loss(self):
         return self.loss_average.result()
-
-@tf.function
-def weighted_binary_cross_entropy(y_true,y_pred,sample_weight):
-    l = tf.keras.metrics.binary_crossentropy(y_true,y_pred)
-    l = l*sample_weight
-    return tf.reduce_mean(l,axis=[1,2])
 
 class HDF5Dataset:
     def __init__(self,h5py_path,

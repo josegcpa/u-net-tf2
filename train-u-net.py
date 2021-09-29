@@ -28,7 +28,7 @@ class ImageCallBack(keras.callbacks.Callback):
         if self.count % self.save_every_n == 0:
             batch = next(iter(tf_dataset.take(1)))
             x,y,w = batch
-            prediction = self.model.predict(x,training=False)[:,:,:,1:]
+            prediction = self.model.predict(x)[:,:,:,1:]
             pred_bin = tf.expand_dims(tf.argmax(prediction,-1),axis=-1)
             truth_bin = tf.expand_dims(tf.argmax(y,-1),axis=-1)
             with self.writer.as_default():
@@ -38,13 +38,8 @@ class ImageCallBack(keras.callbacks.Callback):
                 tf.summary.image("3:Prediction",pred_bin,self.count)
                 tf.summary.image("4:WeightMap",w,self.count)
                 tf.summary.scalar("Loss",logs['loss'],self.count)
-                tf.summary.scalar("MeanIoU",logs['iou'],self.count)
+                tf.summary.scalar("MeanIoU",logs['mean_io_u'],self.count)
         self.count += 1
-
-def load_generator():
-    return generate_images_h5py_dataset(
-        h5py_path=args.dataset_path,input_height=args.input_height,
-        input_width=args.input_width,key_list=key_list)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Trains U-Net model.')
@@ -211,11 +206,12 @@ if __name__ == "__main__":
     tf_dataset_val = tf_dataset_val.batch(args.batch_size).prefetch(50)
 
     print("Setting up training...")
-    iou = tf.keras.metrics.MeanIoU(args.n_classes)
+    iou = MeanIoU(args.n_classes)
     loss_fn = WeightedCrossEntropy()
+    loss_fn_compile = keras.losses.CategoricalCrossentropy()
     u_net.compile(
         optimizer=keras.optimizers.Adamax(learning_rate=args.learning_rate),
-        loss=loss_fn, metrics=[iou])
+        loss=loss_fn_compile, metrics=[iou])
     u_net.loss_fn = loss_fn
     steps_per_epoch = hdf5_dataset.size // args.batch_size
 
@@ -226,7 +222,7 @@ if __name__ == "__main__":
     checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
         args.save_checkpoint_folder)
     lr_callback = tf.keras.callbacks.ReduceLROnPlateau(
-        'loss',min_lr=1e-6)
+        'val_loss',min_lr=1e-6)
 
     all_callbacks = [
         tensorboard_callback,image_callback,checkpoint_callback,
@@ -236,4 +232,4 @@ if __name__ == "__main__":
     u_net.fit(
         x=tf_dataset,batch_size=args.batch_size,epochs=args.number_of_epochs,
         callbacks=all_callbacks,steps_per_epoch=steps_per_epoch,
-        validation_data=tf_dataset_val)
+        validation_data=tf_dataset_val,validation_steps=5)
