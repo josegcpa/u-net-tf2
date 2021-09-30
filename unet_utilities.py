@@ -438,3 +438,107 @@ def generate_images_h5py_dataset(h5py_path,
         if augment_fn is not None:
             image,mask,weight_map = augment_fn(image,mask,weight_map)
         yield image,mask,weight_map
+
+class ImageCallBack(keras.callbacks.Callback):
+    # writes images to summary
+    def __init__(self,save_every_n,tf_dataset,log_dir):
+        super(ImageCallBack, self).__init__()
+        self.save_every_n = save_every_n
+        self.tf_dataset = tf_dataset
+        self.log_dir = log_dir
+        self.writer = tf.summary.create_file_writer(self.log_dir)
+        self.count = 0
+
+    def on_train_batch_end(self, batch, logs=None):
+        if self.count % self.save_every_n == 0:
+            batch = next(iter(self.tf_dataset.take(1)))
+            x,y,w = batch
+            prediction = self.model.predict(x)[:,:,:,1:]
+            pred_bin = tf.expand_dims(tf.argmax(prediction,-1),axis=-1)
+            truth_bin = tf.expand_dims(tf.argmax(y,-1),axis=-1)
+            with self.writer.as_default():
+                tf.summary.image("0:InputImage",x,self.count)
+                tf.summary.image("1:GroundTruth",truth_bin,self.count)
+                tf.summary.image("2:Prediction",prediction,self.count)
+                tf.summary.image("3:Prediction",pred_bin,self.count)
+                tf.summary.image("4:WeightMap",w,self.count)
+                tf.summary.scalar("Loss",logs['loss'],self.count)
+                tf.summary.scalar("MeanIoU",logs['mean_io_u'],self.count)
+                tf.summary.scalar("AUC",logs['auc'],self.count)
+                tf.summary.scalar("Precision",logs['precision'],self.count)
+        self.count += 1
+
+class MeanIoU(keras.metrics.MeanIoU):
+    # adapts MeanIoU to work with model.fit using logits
+    def update_state(self, y_true, y_pred, sample_weight=None):
+        y_true = tf.argmax(y_true, axis=-1)
+        y_pred = tf.argmax(y_pred, axis=-1)
+        return super().update_state(y_true,y_pred,sample_weight)
+
+class Precision(tf.keras.metrics.Precision):
+    # adapts Precision to work with model.fit using logits
+    def update_state(self, y_true, y_pred, sample_weight=None):
+        y_true = tf.argmax(y_true, axis=-1)
+        y_pred = tf.argmax(y_pred, axis=-1)
+        return super().update_state(y_true,y_pred,sample_weight)
+
+class AUC(tf.keras.metrics.AUC):
+    # adapts AUC to work with model.fit using logits.
+    # assumes only two labels are present
+    def update_state(self, y_true, y_pred, sample_weight=None):
+        y_true = tf.argmax(y_true, axis=-1)
+        y_pred = tf.keras.activations.softmax(y_pred, axis=-1)[:,:,:,1]
+        return super().update_state(y_true,y_pred,sample_weight)
+
+class DataGenerator:
+    def __init__(self,image_folder_path):
+        self.image_folder_path = image_folder_path
+        self.image_paths = glob('{}/*'.format(self.image_folder_path))
+        self.n_images = len(self.image_paths)
+    
+    def generate(self,with_path=False):
+        image_idx = [x for x in range(len(self.image_paths))]
+        for idx in image_idx:
+            P = self.image_paths[idx]
+            x = np.array(Image.open(P))[:,:,:3]
+            x = tf.convert_to_tensor(x) / 255
+            yield x,P
+
+class LargeImage:
+    def __init__(self,image,tile_size=[512,512],
+                 output_channels=3,offset=0):
+        """
+        Class facilitating the prediction for large images by 
+        performing all the necessary operations - tiling and 
+        reconstructing the output.
+        """
+        self.image = image
+        self.tile_size = tile_size
+        self.output_channels = output_channels
+        self.offset = offset
+        self.h = self.tile_size[0]
+        self.w = self.tile_size[1]
+        self.sh = self.image.shape[:2]
+        self.output = np.zeros([self.sh[0],self.sh[1],self.output_channels])
+        self.denominator = np.zeros([self.sh[0],self.sh[1],1])
+
+    def tile_image(self):
+        for x in range(0,self.sh[0],self.h):
+            x = x - self.offset
+            if x + self.tile_size[0] > self.sh[0]:
+                x = self.sh[0] - self.tile_size[0]
+            for y in range(0,self.sh[1],self.w):
+                y = y - self.offset
+                if y + self.tile_size[1] > self.sh[1]:
+                    y = self.sh[1] - self.tile_size[1]
+                x_1,x_2 = x, x+self.h
+                y_1,y_2 = y, y+self.w
+                yield self.image[x_1:x_2,y_1:y_2,:],((x_1,x_2),(y_1,y_2))
+
+    def update_output(self,image,coords):
+        (x_1,x_2),(y_1,y_2) = coords
+        self.output[x_1:x_2,y_1:y_2,:] += image
+        self.denominator[x_1:x_2,y_1:y_2,:] += 1
+
+    def return_output(self):
+        return self.output/self.denominator

@@ -7,57 +7,6 @@ from data_generators import *
 from unet_utilities import *
 from tf_da import *
 
-class MeanIoU(keras.metrics.MeanIoU):
-    # adapts MeanIoU to work with model.fit using logits
-    def update_state(self, y_true, y_pred, sample_weight=None):
-        y_true = tf.argmax(y_true, axis=-1)
-        y_pred = tf.argmax(y_pred, axis=-1)
-        return super().update_state(y_true,y_pred,sample_weight)
-
-class Precision(tf.keras.metrics.Precision):
-    # adapts Precision to work with model.fit using logits
-    def update_state(self, y_true, y_pred, sample_weight=None):
-        y_true = tf.argmax(y_true, axis=-1)
-        y_pred = tf.argmax(y_pred, axis=-1)
-        return super().update_state(y_true,y_pred,sample_weight)
-
-class AUC(tf.keras.metrics.AUC):
-    # adapts AUC to work with model.fit using logits.
-    # assumes only two labels are present
-    def update_state(self, y_true, y_pred, sample_weight=None):
-        y_true = tf.argmax(y_true, axis=-1)
-        y_pred = tf.keras.activations.softmax(y_pred, axis=-1)[:,:,:,1]
-        return super().update_state(y_true,y_pred,sample_weight)
-
-class ImageCallBack(keras.callbacks.Callback):
-    # writes images to summary
-    def __init__(self,save_every_n,tf_dataset,log_dir):
-        super(ImageCallBack, self).__init__()
-        self.save_every_n = save_every_n
-        self.tf_dataset = tf_dataset
-        self.log_dir = log_dir
-        self.writer = tf.summary.create_file_writer(self.log_dir)
-        self.count = 0
-
-    def on_train_batch_end(self, batch, logs=None):
-        if self.count % self.save_every_n == 0:
-            batch = next(iter(tf_dataset.take(1)))
-            x,y,w = batch
-            prediction = self.model.predict(x)[:,:,:,1:]
-            pred_bin = tf.expand_dims(tf.argmax(prediction,-1),axis=-1)
-            truth_bin = tf.expand_dims(tf.argmax(y,-1),axis=-1)
-            with self.writer.as_default():
-                tf.summary.image("0:InputImage",x,self.count)
-                tf.summary.image("1:GroundTruth",truth_bin,self.count)
-                tf.summary.image("2:Prediction",prediction,self.count)
-                tf.summary.image("3:Prediction",pred_bin,self.count)
-                tf.summary.image("4:WeightMap",w,self.count)
-                tf.summary.scalar("Loss",logs['loss'],self.count)
-                tf.summary.scalar("MeanIoU",logs['mean_io_u'],self.count)
-                tf.summary.scalar("AUC",logs['auc'],self.count)
-                tf.summary.scalar("Precision",logs['precision'],self.count)
-        self.count += 1
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Trains U-Net model.')
 
