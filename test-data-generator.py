@@ -58,7 +58,6 @@ if __name__ == "__main__":
             parser.add_argument('--{}'.format(arg[0]),dest=arg[0],
                                 action='store_true',default=False)
     
-
     parser.add_argument('--noise_chance',dest = 'noise_chance',
                         action = 'store',type = float,
                         default = 0.1,
@@ -126,7 +125,7 @@ if __name__ == "__main__":
             tf.summary.image(
                 "GroundTruth", y, step=i)
             tf.summary.image(
-                "WeightMap", tf.expand_dims(w,axis=-1), step=i)
+                "WeightMap", w, step=i)
 
             x = x.numpy()
             y = y.numpy()

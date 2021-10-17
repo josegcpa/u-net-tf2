@@ -367,12 +367,14 @@ class TrainUpdater:
 class HDF5Dataset:
     def __init__(self,h5py_path,
                  input_height=256,input_width=256,
-                 key_list=None,augment_fn=None):
+                 key_list=None,augment_fn=None,
+                 excluded_key_list=None):
         self.h5py_path = h5py_path
         self.input_height = input_height
         self.input_width = input_width
         self.key_list = key_list
         self.augment_fn = augment_fn
+        self.excluded_key_list = excluded_key_list
         self.segmentation_dataset = SegmentationDataset(
             hdf5_file=self.h5py_path,
             dimensions=(0,0,self.input_height,self.input_width),
@@ -383,8 +385,17 @@ class HDF5Dataset:
         self.average_image_side = np.mean(
             [x[0] for x in self.segmentation_dataset.sizes])
         self.size = len(self.segmentation_dataset)
-        self.key_list = [x for x in self.key_list 
-                         if x in self.segmentation_dataset.hf_keys]
+        if self.key_list is not None:
+            self.key_list = [
+                x for x in self.key_list 
+                if x in self.segmentation_dataset.hf_keys]
+        else:
+            self.key_list = [
+                x for x in self.segmentation_dataset.hf_keys]
+        if excluded_key_list is not None:
+            self.key_list = [
+                x for x in self.key_list 
+                if x not in self.excluded_key_list]
     
     def grab(self,augment=True):
         if self.key_list is None:
@@ -406,6 +417,44 @@ class HDF5Dataset:
             if self.augment_fn is not None:
                 image,mask,weight_map = self.augment_fn(image,mask,weight_map)
         return image,mask,weight_map
+
+class HDF5DatasetTest:
+    def __init__(self,h5py_path,
+                 key_list=None,
+                 excluded_key_list=None):
+        self.h5py_path = h5py_path
+        self.key_list = key_list
+        self.excluded_key_list = excluded_key_list
+        self.segmentation_dataset = h5py.File(self.h5py_path,'r')
+        self.size = len(self.segmentation_dataset)
+        if self.key_list is not None:
+            K = list(self.segmentation_dataset.keys())
+            self.key_list = [
+                x for x in self.key_list 
+                if x in K]
+        else:
+            self.key_list = [
+                x for x in self.segmentation_dataset.keys()]
+        if excluded_key_list is not None:
+            self.key_list = [
+                x for x in self.key_list 
+                if x not in self.excluded_key_list]
+    
+    def generate(self,augment=True):
+        for key in self.key_list:
+            rr = self.segmentation_dataset[key]
+            image = rr['image'][()]
+            image = tf.convert_to_tensor(image)
+            image = tf.cast(image,tf.float32)
+            if np.any(image == 255):
+                image = image / 255.
+            mask = tf.convert_to_tensor(rr['mask'][()])
+            mask = tf.cast(mask,tf.float32)
+            mask = tf.concat([1-mask,mask],axis=-1)
+            if np.any(np.isnan(image)) or np.any(np.isnan(mask)):
+                pass
+            else:   
+                yield image,mask
 
 def generate_images_h5py_dataset(h5py_path,
                                 input_height=256,
@@ -523,12 +572,10 @@ class LargeImage:
         self.denominator = np.zeros([self.sh[0],self.sh[1],1])
 
     def tile_image(self):
-        for x in range(0,self.sh[0],self.h):
-            x = x - self.offset
+        for x in range(0,self.sh[0],self.h-self.offset):
             if x + self.tile_size[0] > self.sh[0]:
                 x = self.sh[0] - self.tile_size[0]
-            for y in range(0,self.sh[1],self.w):
-                y = y - self.offset
+            for y in range(0,self.sh[1],self.w-self.offset):
                 if y + self.tile_size[1] > self.sh[1]:
                     y = self.sh[1] - self.tile_size[1]
                 x_1,x_2 = x, x+self.h

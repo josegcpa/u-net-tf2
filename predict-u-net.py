@@ -19,6 +19,11 @@ if __name__ == "__main__":
         help = 'Combines input and prediction when saving the output.')
     parser.add_argument('--tta',dest = 'tta',action = 'store_true',
                         help = 'User test-time augmentation.')
+    parser.add_argument('--isolate',dest = 'isolate',action = 'store_true',
+                        help = 'Isolate cells in a smaller image.')
+    parser.add_argument('--isolated_size',dest = 'isolated_size',
+                        action = 'store',type=int,default=128,
+                        help = 'Isolate cells in a smaller image.')
 
     parser.add_argument('--input_height',dest = 'input_height',
                         action = 'store',type = int,default = 256,

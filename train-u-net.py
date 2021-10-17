@@ -190,9 +190,9 @@ if __name__ == "__main__":
     image_callback = ImageCallBack(
         args.log_every_n_steps,tf_dataset,log_dir=args.save_summary_folder)
     checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
-        args.save_checkpoint_folder)
+        args.save_checkpoint_folder + '-{epoch:02d}')
     lr_callback = tf.keras.callbacks.ReduceLROnPlateau(
-        'val_loss',min_lr=1e-6)
+        'val_loss',min_lr=1e-6,factor=0.75)
 
     all_callbacks = [
         tensorboard_callback,image_callback,checkpoint_callback,
@@ -202,4 +202,4 @@ if __name__ == "__main__":
     u_net.fit(
         x=tf_dataset,batch_size=args.batch_size,epochs=args.number_of_epochs,
         callbacks=all_callbacks,steps_per_epoch=steps_per_epoch,
-        validation_data=tf_dataset_val,validation_steps=5)
+        validation_data=tf_dataset_val,validation_steps=15)
