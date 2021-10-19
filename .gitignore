@@ -9,3 +9,4 @@ train-u-net-test.py
 Untitled.ipynb
 .ipynb_checkpoints
 dataset
+test_results/

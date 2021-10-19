@@ -30,7 +30,6 @@ if __name__ == "__main__":
                         action = 'store',type = float,default = 1.,
                         help = 'Change the number of channels in all layers.')
 
-    #Data augmentation
     parser.add_argument('--n_classes',dest = 'n_classes',
                         action = 'store',type = int,
                         default = 2,

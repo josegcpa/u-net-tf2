@@ -7,12 +7,11 @@ python3 train-u-net.py \
     --input_width 512 \
     --number_of_epochs 100 \
     --beta_l2_regularization 0.005 \
-    --learning_rate 0.001 \
+    --learning_rate 0.005 \
     --depth_mult $DEPTH \
     --save_checkpoint_steps 500 \
     --save_checkpoint_folder checkpoints/u-net-$DEPTH/u-net \
     --save_summary_folder summaries/u-net-$DEPTH \
-    --learning_rate 0.005 \
     --brightness_max_delta 0.1 \
     --saturation_lower 0.9 \
     --saturation_upper 1.1 \
@@ -26,10 +25,10 @@ python3 train-u-net.py \
     --blur_std 0.005 \
     --elastic_transform_p 0.3 \
     --discrete_rotation \
-    --min_jpeg_quality 1 \
-    --max_jpeg_quality 1 \
+    --min_jpeg_quality 90 \
+    --max_jpeg_quality 100 \
     --key_list ../u-net/training_set_files \
     --validation_iterations 15 \
     --log_every_n_steps 250 \
-    --batch_size 2 \
+    --batch_size 4 \
     --truth_only

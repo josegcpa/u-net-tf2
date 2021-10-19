@@ -132,7 +132,7 @@ if __name__ == "__main__":
     print("Setting up network...")
     u_net = UNet(depth_mult=args.depth_mult,padding=args.padding,
                  factorization=args.factorization,n_classes=args.n_classes,
-                 beta=args.beta_l2_regularization,dropout_rate=0.1,
+                 beta=args.beta_l2_regularization,dropout_rate=0.25,
                  squeeze_and_excite=args.squeeze_and_excite)
 
     print("Setting up data generator...")
