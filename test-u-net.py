@@ -34,6 +34,8 @@ if __name__ == "__main__":
                         action = 'store',type = int,
                         default = 2,
                         help = 'Number of classes in the segmented images.')
+    parser.add_argument('--tta',dest = 'tta',action = 'store_true',
+                        help = 'Use test-time augmentation.')
     parser.add_argument('--key_list',dest = 'key_list',
                         action = 'store',
                         default = None,
@@ -80,7 +82,14 @@ if __name__ == "__main__":
         for tile,coords in large_image.tile_image():
             tile_tensor = tf.convert_to_tensor(tile)
             tile_tensor = tf.expand_dims(tile_tensor,0)
-            prediction = np.squeeze(u_net(tile_tensor).numpy(),0)
+            if args.tta == True:
+                tile_tensor = tta_rotation(tile_tensor)
+                prediction = u_net(tile_tensor)
+                prediction = rotate_and_reduce(prediction)
+                prediction = np.squeeze(prediction.numpy(),axis=0)
+            else:
+                prediction = u_net(tile_tensor)
+                prediction = np.squeeze(prediction.numpy(),axis=0)
             large_image.update_output(prediction,coords)
 
         mask = tf.convert_to_tensor(mask)

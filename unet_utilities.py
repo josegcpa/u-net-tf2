@@ -16,15 +16,6 @@ from data_generators import *
 Deep learning/TF-related operations.
 """
 
-def safe_log(tensor):
-    """
-    Prevents log(0)
-
-    Arguments:
-    * tensor - tensor
-    """
-    return tf.log(tf.clip_by_value(tensor,1e-32,tf.reduce_max(tensor)))
-
 class UNetConvLayer(keras.layers.Layer):
     def __init__(self,
                  depth,
@@ -456,38 +447,6 @@ class HDF5DatasetTest:
             else:   
                 yield image,mask
 
-def generate_images_h5py_dataset(h5py_path,
-                                input_height=256,
-                                input_width=256,
-                                key_list=None,
-                                augment_fn=None):
-    segmentation_dataset = SegmentationDataset(
-        hdf5_file=h5py_path,
-        dimensions=(0,0,input_height,input_width),
-        mode='segmentation',
-        rel_keys=['image','mask','weight_map'],
-        rotate_record=True,
-        transform=None)
-    size = len(segmentation_dataset)
-    key_list = [x for x in key_list if x in segmentation_dataset.hf_keys]
-    while True:
-        if key_list is None:
-            random_idx = np.random.randint(0,size)
-            rr = segmentation_dataset[random_idx]
-            mask = np.concatenate([1-rr['mask'],rr['mask']],axis=2)
-        else:
-            random_key = np.random.choice(key_list)
-            rr = segmentation_dataset[random_key]
-            mask = np.concatenate([1-rr['mask'],rr['mask']],axis=2)
-
-        image = tf.convert_to_tensor(rr['image'])
-        image = tf.cast(image,tf.float32) / 255.
-        mask = tf.convert_to_tensor(mask * 255)
-        weight_map = tf.convert_to_tensor(rr['weight_map'])
-        if augment_fn is not None:
-            image,mask,weight_map = augment_fn(image,mask,weight_map)
-        yield image,mask,weight_map
-
 class ImageCallBack(keras.callbacks.Callback):
     # writes images to summary
     def __init__(self,save_every_n,tf_dataset,log_dir):
@@ -503,13 +462,13 @@ class ImageCallBack(keras.callbacks.Callback):
             batch = next(iter(self.tf_dataset.take(1)))
             x,y,w = batch
             prediction = self.model.predict(x)[:,:,:,1:]
-            pred_bin = tf.expand_dims(tf.argmax(prediction,-1),axis=-1)
-            truth_bin = tf.expand_dims(tf.argmax(y,-1),axis=-1)
+            pred_bin = tf.expand_dims(tf.argmax(prediction,-1),axis=-1) * 255
+            truth_bin = tf.expand_dims(tf.argmax(y,-1),axis=-1) * 255
             with self.writer.as_default():
                 tf.summary.image("0:InputImage",x,self.count)
                 tf.summary.image("1:GroundTruth",truth_bin,self.count)
                 tf.summary.image("2:Prediction",prediction,self.count)
-                tf.summary.image("3:Prediction",pred_bin,self.count)
+                tf.summary.image("3:PredictionBinary",pred_bin,self.count)
                 tf.summary.image("4:WeightMap",w,self.count)
                 tf.summary.scalar("Loss",logs['loss'],self.count)
                 tf.summary.scalar("MeanIoU",logs['mean_io_u'],self.count)
@@ -589,3 +548,56 @@ class LargeImage:
 
     def return_output(self):
         return self.output/self.denominator
+
+def safe_log(tensor):
+    """
+    Prevents log(0)
+
+    Arguments:
+    * tensor - tensor
+    """
+    return tf.log(tf.clip_by_value(tensor,1e-32,tf.reduce_max(tensor)))
+
+def generate_images_h5py_dataset(h5py_path,
+                                input_height=256,
+                                input_width=256,
+                                key_list=None,
+                                augment_fn=None):
+    segmentation_dataset = SegmentationDataset(
+        hdf5_file=h5py_path,
+        dimensions=(0,0,input_height,input_width),
+        mode='segmentation',
+        rel_keys=['image','mask','weight_map'],
+        rotate_record=True,
+        transform=None)
+    size = len(segmentation_dataset)
+    key_list = [x for x in key_list if x in segmentation_dataset.hf_keys]
+    while True:
+        if key_list is None:
+            random_idx = np.random.randint(0,size)
+            rr = segmentation_dataset[random_idx]
+            mask = np.concatenate([1-rr['mask'],rr['mask']],axis=2)
+        else:
+            random_key = np.random.choice(key_list)
+            rr = segmentation_dataset[random_key]
+            mask = np.concatenate([1-rr['mask'],rr['mask']],axis=2)
+
+        image = tf.convert_to_tensor(rr['image'])
+        image = tf.cast(image,tf.float32) / 255.
+        mask = tf.convert_to_tensor(mask * 255)
+        weight_map = tf.convert_to_tensor(rr['weight_map'])
+        if augment_fn is not None:
+            image,mask,weight_map = augment_fn(image,mask,weight_map)
+        yield image,mask,weight_map
+
+def tta_rotation(x):
+    tensor_list = [x]
+    tensor_list.extend([tf.image.rot90(x,i) for i in range(1,4)])
+    return tf.concat(tensor_list,axis=0)
+
+def rotate_and_reduce(x):
+    tensor_list = [x[0,:,:,:]]
+    tensor_list.extend([
+        tf.image.rot90(x[i,:,:,:],-i) for i in range(1,4)])
+    output_tensor = tf.stack(tensor_list,axis=0)
+    return tf.reduce_mean(output_tensor,axis=0,keepdims=True)

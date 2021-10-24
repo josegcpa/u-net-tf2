@@ -193,10 +193,12 @@ if __name__ == "__main__":
         args.save_checkpoint_folder + '-{epoch:02d}')
     lr_callback = tf.keras.callbacks.ReduceLROnPlateau(
         'val_loss',min_lr=1e-6,factor=0.75)
+    early_stopping_callback = tf.keras.callbacks.EarlyStopping(
+        'val_mean_io_u',patience=5,mode='max')
 
     all_callbacks = [
         tensorboard_callback,image_callback,checkpoint_callback,
-        lr_callback]
+        lr_callback,early_stopping_callback]
 
     print("Training...")
     u_net.fit(
