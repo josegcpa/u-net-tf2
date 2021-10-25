@@ -1,3 +1,5 @@
+source /hps/research/gerstung/josegcpa/projects/01IMAGE/tf2/bin/activate
+
 DEPTH=$1
 
 python3 train-u-net.py \
