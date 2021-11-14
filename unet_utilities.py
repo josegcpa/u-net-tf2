@@ -6,6 +6,9 @@ import tifffile as tiff
 import h5py
 from scipy.spatial import distance
 from PIL import Image
+from skimage.filters import apply_hysteresis_threshold
+from scipy.ndimage.morphology import binary_fill_holes
+from scipy.ndimage import convolve
 
 import tensorflow as tf
 from tensorflow import keras
@@ -447,6 +450,44 @@ class HDF5DatasetTest:
             else:   
                 yield image,mask
 
+class HDF5DatasetPredict:
+    def __init__(self,h5py_path,
+                 key_list=None,
+                 excluded_key_list=None):
+        self.h5py_path = h5py_path
+        self.key_list = key_list
+        self.excluded_key_list = excluded_key_list
+        self.segmentation_dataset = h5py.File(self.h5py_path,'r')
+        self.size = len(self.segmentation_dataset)
+        if self.key_list is not None:
+            K = list(self.segmentation_dataset.keys())
+            self.key_list = [
+                x for x in self.key_list 
+                if x in K]
+        else:
+            self.key_list = [
+                x for x in self.segmentation_dataset.keys()]
+        if excluded_key_list is not None:
+            self.key_list = [
+                x for x in self.key_list 
+                if x not in self.excluded_key_list]
+    
+    def generate(self,with_path=False):
+        for key in self.key_list:
+            rr = self.segmentation_dataset[key]
+            image = rr['image'][()]
+            image = tf.convert_to_tensor(image)
+            image = tf.cast(image,tf.float32)
+            if np.any(image == 255):
+                image = image / 255.
+            if np.any(np.isnan(image)):
+                pass
+            else:
+                if with_path == True:
+                    yield image,key
+                else:
+                    yield image
+
 class ImageCallBack(keras.callbacks.Callback):
     # writes images to summary
     def __init__(self,save_every_n,tf_dataset,log_dir):
@@ -601,3 +642,102 @@ def rotate_and_reduce(x):
         tf.image.rot90(x[i,:,:,:],-i) for i in range(1,4)])
     output_tensor = tf.stack(tensor_list,axis=0)
     return tf.reduce_mean(output_tensor,axis=0,keepdims=True)
+
+def convolve_n(image,F,n=1,thr=0.6):
+    for i in range(n):
+        image = convolve(image.astype(np.float32),F) > thr
+    return image.astype(np.bool)
+
+def draw_hulls(image):
+    contours,_ = cv2.findContours(image.astype(np.uint8),2,1)
+    cnt = contours[-1]
+    defects = cv2.convexityDefects(
+        cnt, cv2.convexHull(cnt,returnPoints = False))
+    if defects is not None:
+        defects = defects[defects[:,0,-1]>2000,:,:]
+        if defects.size > 0:
+            for defect in defects:
+                a = tuple([x for x in cnt[defect[0,0],0,:]])
+                b = tuple([x for x in cnt[defect[0,1],0,:]])
+                output = cv2.line(image.astype(np.uint8),a,b,1)
+                output = binary_fill_holes(output)
+        else:
+            output = image
+    else:
+        output = image
+    return output,cnt
+
+def filter_refine_cell(image_labels_im_i):
+    F_size = 9
+    Filter = np.ones([F_size,F_size]) / (F_size**2)
+    image,labels_im,i,rs = image_labels_im_i
+    s = 128
+    s_2 = s // 2
+    sh = image.shape
+    x,y = np.where(labels_im == i)
+    R = x.min(),y.min(),x.max(),y.max()
+    cx,cy = int((R[2]+R[0])/2),int((R[3]+R[1])/2)
+    sx,sy = R[2]-R[0],R[3]-R[1]
+    cc = [cx-s_2,cy-s_2]
+    cc.extend([cc[0]+s,cc[1]+s])
+    features = None
+    x_ = x - cc[0]
+    y_ = y - cc[1]
+    S = len(x)
+    conditions = [
+        cc[0]<0,cc[1]<0,cc[2]>sh[0],cc[3]>sh[1],
+        x_.max() > 120,y_.max() > 120]
+    try:
+        if np.any(conditions):
+            if (S > 100/rs) and (S < 8000/rs):
+                sub_image = image[cc[0]:cc[2],cc[1]:cc[3],:]
+                mask_binary_holes = np.zeros([s,s])
+                mask_binary_holes[(x_,y_)] = 1
+                mask_convolved = convolve_n(
+                    mask_binary_holes.astype(np.float32),
+                    Filter,3,thr=0.5)
+                mask_hulls,cnt = draw_hulls(mask_convolved)
+                mask_hulls = binary_fill_holes(mask_hulls)
+                features = {}
+                features['image'] = sub_image
+                features['mask'] = mask_hulls
+                features['cnt'] = cnt
+                features['x'] = x
+                features['y'] = y
+        else:
+            if (S > 1000/rs) and (S < 8000/rs):
+                sub_image = image[cc[0]:cc[2],cc[1]:cc[3],:]
+                mask_binary_holes = np.zeros([s,s])
+                mask_binary_holes[(x_,y_)] = 1
+                mask_convolved = convolve_n(
+                    mask_binary_holes.astype(np.float32),
+                    Filter,3,thr=0.5)
+                mask_hulls,cnt = draw_hulls(mask_convolved)
+                mask_hulls = binary_fill_holes(mask_hulls)
+                features = {}
+                features['image'] = sub_image
+                features['mask'] = mask_hulls
+                features['cnt'] = cnt
+                features['x'] = x
+                features['y'] = y
+    except:
+        features = None
+    return features
+
+def refine_prediction_wbc(image,mask,rs):
+    mask_binary = apply_hysteresis_threshold(mask,0.5,0.5)
+    mask_binary = np.where(mask > 0.5,1,0)
+    mask_binary_holes = binary_fill_holes(mask_binary)
+
+    num_labels, labels_im = cv2.connectedComponents(
+        np.uint8(mask_binary_holes))
+
+    output = np.zeros(mask_binary_holes.shape,dtype=np.uint8)
+    if num_labels > 1:
+        for i in range(1,num_labels):
+            features = filter_refine_cell([image,labels_im,i,rs])
+            if features is not None:
+                x,y = features['x'],features['y']
+                output[x,y] = 1
+    
+    return output

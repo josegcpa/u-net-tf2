@@ -10,3 +10,7 @@ Untitled.ipynb
 .ipynb_checkpoints
 dataset
 test_results/
+prediction_adden_1.h5
+prediction_adden_2.h5
+.gitignore
+prediction_mll.h5

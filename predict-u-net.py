@@ -13,17 +13,16 @@ if __name__ == "__main__":
                         action='store',type=str,default=None)
     parser.add_argument('--output_path',dest='output_path',
                         action='store',type=str,default=None)
-    parser.add_argument(
-        '--example',dest = 'example',
-        action = 'store_true',
-        help = 'Combines input and prediction when saving the output.')
-    parser.add_argument('--tta',dest = 'tta',action = 'store_true',
-                        help = 'User test-time augmentation.')
-    parser.add_argument('--isolate',dest = 'isolate',action = 'store_true',
-                        help = 'Isolate cells in a smaller image.')
-    parser.add_argument('--isolated_size',dest = 'isolated_size',
-                        action = 'store',type=int,default=128,
-                        help = 'Isolate cells in a smaller image.')
+    parser.add_argument('--key_list',dest = 'key_list',
+                        action = 'store',
+                        default = None,
+                        help = 'File with one image file per list (for h5 \
+                        extension).')
+    parser.add_argument('--excluded_key_list',dest = 'excluded_key_list',
+                        action = 'store',
+                        default = None,
+                        help = 'File with one image file per list (for h5 \
+                        extension) to be excluded.')
 
     parser.add_argument('--input_height',dest = 'input_height',
                         action = 'store',type = int,default = 256,
@@ -31,6 +30,16 @@ if __name__ == "__main__":
     parser.add_argument('--input_width',dest = 'input_width',
                         action = 'store',type = int,default = 256,
                         help = 'The file extension for all images.')
+    parser.add_argument('--padding',dest = 'padding',
+                        action = 'store',default = 'VALID',
+                        help = 'Define padding.',
+                        choices = ['VALID','SAME'])
+    parser.add_argument('--depth_mult',dest = 'depth_mult',
+                        action = 'store',type = float,default = 1.,
+                        help = 'Change the number of channels in all layers.')
+    parser.add_argument('--rs',dest = 'rs',action = 'store',
+                        type=float,default=1,
+                        help = 'Rescale by this factor (only if refining).')
 
     parser.add_argument('--checkpoint_path',dest = 'checkpoint_path',
                         action = 'store',type = str,default = 'checkpoints',
@@ -43,38 +52,57 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    try: os.makedirs(args.output_path)
-    except: pass
+    print("Setting up network...")
+    u_net = UNet(depth_mult=args.depth_mult,padding=args.padding,
+                 factorization=False,n_classes=args.n_classes,
+                 dropout_rate=0,squeeze_and_excite=False)
+    u_net.load_weights(args.checkpoint_path)
+    u_net.training = False
 
-    u_net = keras.models.load_model(args.checkpoint_path)
+    print("Setting up data generator...")
+    if args.key_list is not None:
+        key_list = [x.strip() for x in open(args.key_list).readlines()]
+    else:
+        key_list = None
+    if args.excluded_key_list is not None:
+        excluded_key_list = [
+            x.strip() for x in open(args.excluded_key_list).readlines()]
+    else:
+        excluded_key_list = None
+    hdf5_dataset = HDF5DatasetPredict(
+        h5py_path=args.input_path,
+        key_list=key_list,
+        excluded_key_list=excluded_key_list)
+    hdf5_output = h5py.File(args.output_path,'w')
 
-    data_generator = DataGenerator(args.input_path)
+    print("Predicting...")
+    for image,path in tqdm(hdf5_dataset.generate(with_path=True)):
+        R = os.path.split(path)[-1]
+        g = hdf5_output.create_group(R)
+        g['image'] = image
+        large_image = LargeImage(image,[512,512],args.n_classes,offset=128)
+        large_image_tta = LargeImage(image,[512,512],args.n_classes,offset=128)
+        for tile,coords in large_image.tile_image():
+            tile_tensor = tf.convert_to_tensor(tile)
+            tile_tensor = tf.expand_dims(tile_tensor,0)
+            tile_tensor = tta_rotation(tile_tensor)
+            prediction = u_net(tile_tensor)
+            prediction_original = prediction[0,:,:,:]
+            prediction = rotate_and_reduce(prediction)
+            prediction = np.squeeze(prediction.numpy(),axis=0)
+            prediction_original = prediction_original.numpy()
+            large_image.update_output(prediction_original,coords)
+            large_image_tta.update_output(prediction,coords)
 
-    pbar = tqdm(data_generator.n_images)
-    for image,image_path in data_generator.generate(with_path=True):
-        root = os.path.split(image_path)[-1]
-        output_path = '{}/prediction_{}'.format(args.output_path,root)
-        condition_h = image.shape[0] <= args.input_height
-        condition_w = image.shape[1] <= args.input_width
-        if np.all([condition_h,condition_w]):
-            image_tensor = tf.expand_dims(
-                tf.convert_to_tensor(image),axis=0)
-            image_prediction = u_net.predict(image_tensor)[0]
-        else:
-            large_image = LargeImage(
-                image,tile_size=[args.input_height,args.input_width],
-                output_channels=args.n_classes)
-            for tile,coords in large_image.tile_image():
-                tile_tensor = tf.expand_dims(
-                    tf.convert_to_tensor(tile),axis=0)
-                tile_prediction = u_net.predict(tile_tensor)
-                large_image.update_output(tile_prediction[0],coords)
-            image_prediction = large_image.return_output()
-        image_prediction = np.argmax(image_prediction,axis=-1)
+        pred_np = large_image.return_output()
+        pred_np_tta = large_image_tta.return_output()
+        g['prediction'] = pred_np
+        g['prediction_tta'] = pred_np_tta
 
-        image_prediction = label2rgb(image_prediction,bg_label=0)
-        if args.example == True:
-            image_prediction = np.concatenate([image,image_prediction],axis=1)
-        image_prediction = Image.fromarray(np.uint8(image_prediction*255))
-        image_prediction.save(output_path)
-        pbar.update()
+        pred_tta = tf.convert_to_tensor(pred_np_tta)
+        pred_np_tta = tf.keras.activations.softmax(
+            pred_tta,axis=-1)[:,:,1]
+        pred_np_tta = pred_np_tta.numpy()
+        pred_np_tta_refine = refine_prediction_wbc(image,pred_np_tta,args.rs)
+
+        g['prediction_tta_refine'] = pred_np_tta_refine

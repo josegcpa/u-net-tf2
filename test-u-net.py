@@ -36,6 +36,11 @@ if __name__ == "__main__":
                         help = 'Number of classes in the segmented images.')
     parser.add_argument('--tta',dest = 'tta',action = 'store_true',
                         help = 'Use test-time augmentation.')
+    parser.add_argument('--refine',dest = 'refine',action = 'store_true',
+                        help = 'Refine prediction for WBC.')
+    parser.add_argument('--rs',dest = 'rs',action = 'store',
+                        type=float,default=1,
+                        help = 'Rescale by this factor (only if refining).')
     parser.add_argument('--key_list',dest = 'key_list',
                         action = 'store',
                         default = None,
@@ -73,9 +78,14 @@ if __name__ == "__main__":
         excluded_key_list=excluded_key_list)
 
     print("Setting up training...")
-    iou = MeanIoU(args.n_classes)
-    auc = AUC()
-    prec = Precision()
+    if args.refine == True:
+        iou = keras.metrics.MeanIoU(args.n_classes)
+        auc = keras.metrics.AUC(num_thresholds=50)
+        prec = keras.metrics.Precision()
+    else:    
+        iou = MeanIoU(args.n_classes)
+        auc = AUC(num_thresholds=50)
+        prec = Precision()
 
     for image,mask in hdf5_dataset.generate():
         large_image = LargeImage(image,[512,512],args.n_classes,offset=128)
@@ -92,8 +102,16 @@ if __name__ == "__main__":
                 prediction = np.squeeze(prediction.numpy(),axis=0)
             large_image.update_output(prediction,coords)
 
+        pred_np = large_image.return_output()
         mask = tf.convert_to_tensor(mask)
-        prediction = tf.convert_to_tensor(large_image.return_output())
+        if args.refine == True:
+            mask = tf.argmax(mask,axis=-1)
+            pred = tf.convert_to_tensor(pred_np)
+            pred_np = tf.keras.activations.softmax(pred, axis=-1)[:,:,1]
+            pred_np = pred_np.numpy()
+            pred_np = refine_prediction_wbc(image,pred_np,args.rs)
+
+        prediction = tf.convert_to_tensor(pred_np)
         mask = tf.expand_dims(mask,0)
         prediction = tf.expand_dims(prediction,0)
         auc.update_state(mask,prediction)

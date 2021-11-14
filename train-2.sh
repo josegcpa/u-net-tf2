@@ -9,7 +9,7 @@ python3 train-u-net.py \
     --input_width 512 \
     --number_of_epochs 100 \
     --beta_l2_regularization 0.005 \
-    --learning_rate 0.0005 \
+    --learning_rate 0.0001 \
     --depth_mult $DEPTH \
     --save_checkpoint_steps 500 \
     --save_checkpoint_folder checkpoints/u-net-$DEPTH/u-net \

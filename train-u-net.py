@@ -178,7 +178,7 @@ if __name__ == "__main__":
     loss_fn = WeightedCrossEntropy()
     loss_fn_compile = keras.losses.CategoricalCrossentropy(from_logits=True)
     u_net.compile(
-        optimizer=keras.optimizers.Adamax(learning_rate=args.learning_rate),
+        optimizer=keras.optimizers.Adam(learning_rate=args.learning_rate),
         loss=loss_fn_compile, metrics=[iou,auc,prec])
     u_net.loss_fn = loss_fn
     steps_per_epoch = hdf5_dataset.size // args.batch_size
